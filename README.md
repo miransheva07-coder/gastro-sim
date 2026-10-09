@@ -1,2 +1,0 @@
-# gastro-sim
-gastro-sim
