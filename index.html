@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <style>:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
-<title>胃透視シミュレータ v43</title>
+<title>胃透視シミュレータ v45</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#030506">
 <script src="vendor/vosk.js"></script>
@@ -251,7 +251,7 @@ body{font-family:var(--f-body);font-size:14px;line-height:1.5;padding:0 12px;ove
       <li><b>画像</b>:各画素の減弱の積分を計算します。付着層は接線方向で積分が長くなり、胃の輪郭が白線になります。</li>
     </ul>
     <p>教育用の簡略モデルです。形状・物性値は実測ではありません。</p>
-    <p>バージョン v43(2026-10-09)</p>
+    <p>バージョン v45(2026-10-09)</p>
   </div>
   <button class="btn" id="iClose" type="button">閉じる</button>
 </div>
@@ -854,6 +854,15 @@ let tiltLive=0;
 const pat={q:[],mode:null,target:0,final:null,dir:0,left:0,lastDir:0,speed:42,hold:false,bOff:0,bT:0,bVel:0,clock:0};
 let BREATHY=0;
 const nrm=t=>t.replace(/\s|、|。|!|！|\?|？/g,'').replace(/[ァ-ン]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60));
+// numbers: 45 / ４５ / 四十五 / 四五 / よんじゅうご -> 45 (followed by 度 / ど, or a bare number)
+const KD={'〇':0,'零':0,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9},KN={'いち':1,'に':2,'さん':3,'よん':4,'し':4,'ご':5,'ろく':6,'なな':7,'しち':7,'はち':8,'きゅう':9,'く':9};
+function kanjiNum(k){let tot=0,cur=0,any=false;for(const ch of k){if(ch in KD){cur=cur*10+KD[ch];any=true;}else if(ch==='十'){tot+=(cur||1)*10;cur=0;any=true;}else if(ch==='百'){tot+=(cur||1)*100;cur=0;any=true;}}return any?tot+cur:null;}
+function parseAngle(t){t=t.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0));
+  let m=t.match(/(\d{1,3})(度|ど)?/);if(m)return +m[1];
+  m=t.match(/([〇零一二三四五六七八九十百]+)(度|ど)/)||t.match(/([一二三四五六七八九]?十[一二三四五六七八九]?|百[一二三四五六七八九十]*)/);if(m){const v=kanjiNum(m[1]);if(v)return v;}
+  m=t.match(/((?:いち|に|さん|よん|ご|ろく|なな|はち|きゅう)?じゅう(?:いち|に|さん|よん|ご|ろく|なな|はち|きゅう)?)(ど)/);
+  if(m){const w=m[1],[x,y]=w.split('じゅう');return (x?KN[x]:1)*10+(y?KN[y]:0);}
+  return null;}
 function parseCmd(raw){const t=nrm(raw);
   const small=/(少し|すこし|ちょっと|ちょい|もうすこし|もう少し|わずか)/.test(t);
   if(/(息|いき).*(止|と)め|(吸|す)って.*(止|と)め|(息|いき)(止|と)め/.test(t))return{k:'hold'};
@@ -861,7 +870,10 @@ function parseCmd(raw){const t=nrm(raw);
   if(/(一回転|いっかいてん|ぐるっと|ぐるりと|ひとまわり|一周)/.test(t))return{k:'roll',dir:/左|ひだり/.test(t)?-1:1};
   if(/(うつ伏せ|うつぶせ|腹ばい|はらばい|下を向|したをむ)/.test(t))return{k:'to',v:180};
   if(/(仰向け|あおむけ|上を向|うえをむ|天井)/.test(t))return{k:'to',v:0};
-  const R=/(右|みぎ)/.test(t),L=/(左|ひだり)/.test(t);
+  const R=/(右|みぎ)/.test(t),L=/(左|ひだり)/.test(t),deg=parseAngle(t);
+  if(deg&&deg<=180){
+    if(R||L){if(/(上げ|あげ|浮か|うか|起こ|おこ)/.test(t))return{k:'by',v:(R?-1:1)*deg};return{k:'by',v:(R?1:-1)*deg};}
+    return{k:'more',deg};}
   if((R||L)&&/(上げ|あげ|浮か|うか|起こ|おこ)/.test(t)){const side=R?-1:1;return{k:'by',v:side*(small?15:35)};}
   if((R||L)&&/(下に|したに|下へ|下を|下にし|横|よこ|向い|むい)/.test(t)&&!/(回|まわ)/.test(t))return{k:'to',v:R?90:-90};
   if((R||L)&&/(回|まわ)/.test(t))return{k:'cont',dir:R?1:-1};
@@ -885,7 +897,7 @@ function startMove(c){const now=tgt.rot,err=(Math.random()*2-1)*6;
   else if(c.k==='roll'){pat.mode='cont';pat.dir=c.dir;pat.left=360+err;pat.lastDir=c.dir;pat.roll=true;}
   else if(c.k==='stop'){pat.mode=null;pat.final=null;}
   else if(c.k==='back'){const d=-(pat.lastDir||1);pat.mode='to';pat.final=now+d*(8+Math.random()*4);pat.target=pat.final;}
-  else if(c.k==='more'){const d=pat.lastDir||1;pat.mode='to';pat.final=now+d*(8+Math.random()*6);pat.target=pat.final+d*2;}
+  else if(c.k==='more'){const d=pat.lastDir||1,amt=c.deg?c.deg+(Math.random()*2-1)*4:8+Math.random()*6;pat.mode='to';pat.final=now+d*amt;pat.target=pat.final+d*2;}
   else if(c.k==='hold')pat.hold=true;
   else if(c.k==='free')pat.hold=false;}
 function patientCancel(){pat.mode=null;pat.final=null;pat.q.length=0;}
@@ -914,7 +926,42 @@ for(const t of['右を下にして横向きに','左を下にして横向きに'
 const mic={on:false,busy:false,model:null,rec:null,ctx:null,stream:null,node:null,muteUntil:0,wake:null};
 function micUI(state,msg){const b=$('bMic');b.dataset.state=state;b.setAttribute('aria-pressed',String(state==='on'));
   b.textContent=state==='on'?'聞き取り中':state==='load'?'準備中…':'常時マイク';
-  const st=$('ovMic');if(msg){st.textContent=msg;st.hidden=false;}else st.hidden=state!=='on';if(state==='on'&&!msg)st.textContent='聞き取り中';}
+  const st=$('ovMic');if(msg){st.textContent=msg;st.hidden=false;}else st.hidden=state!=='on';if(state==='on'&&!msg)st.textContent='聞き取り中('+(mic.mode||'')+'モード)';}
+// ---------- command grammar: restrict recognition to exam phrases (much better for numbers like 四十五度) ----------
+async function vocabFromTarGz(blob){
+  if(typeof DecompressionStream==='undefined')return null;
+  const rd=blob.stream().pipeThrough(new DecompressionStream('gzip')).getReader(),dec=new TextDecoder();
+  const hdr=new Uint8Array(512);let hn=0,mode='hdr',rem=0,grab=null,gn=0;
+  const str=(a,b)=>dec.decode(hdr.subarray(a,b)).replace(/\0[\s\S]*$/,'');
+  for(;;){const {done,value:v}=await rd.read();if(done)break;let i=0;
+    while(i<v.length){
+      if(mode==='hdr'){const n=Math.min(512-hn,v.length-i);hdr.set(v.subarray(i,i+n),hn);hn+=n;i+=n;
+        if(hn<512)continue;hn=0;let name=str(0,100);const pre=str(345,500);if(pre)name=pre+'/'+name;if(!name)continue;
+        const size=parseInt(str(124,136).trim()||'0',8)||0,pad=Math.ceil(size/512)*512;
+        if(/(^|\/)graph\/words\.txt$/.test(name)){mode='grab';grab=new Uint8Array(size);gn=0;}else mode='skip';rem=pad;if(!rem)mode='hdr';}
+      else{const n=Math.min(rem,v.length-i);
+        if(mode==='grab'){const t=Math.min(n,grab.length-gn);if(t>0){grab.set(v.subarray(i,i+t),gn);gn+=t;}}
+        i+=n;rem-=n;if(!rem){if(mode==='grab'){rd.cancel().catch(()=>{});return dec.decode(grab);}mode='hdr';}}}}
+  return null;}
+const KNUM=n=>{const d=['','一','二','三','四','五','六','七','八','九'];let s='';if(n>=100){s+=(n>=200?d[Math.floor(n/100)]:'')+'百';n%=100;}
+  if(n>=10){s+=(n>=20?d[Math.floor(n/10)]:'')+'十';n%=10;}return s+d[n];};
+function buildGrammar(words){
+  const V=new Set();let maxL=1;
+  for(const line of words.split('\n')){const w=line.split(/\s+/)[0];if(w&&!/^[<#\[]/.test(w)){V.add(w);if(w.length>maxL)maxL=Math.min(w.length,10);}}
+  const seg=ph=>{const out=[];let i=0;while(i<ph.length){let ok=false;for(let L=Math.min(maxL,ph.length-i);L>0;L--){const w=ph.substr(i,L);if(V.has(w)){out.push(w);i+=L;ok=true;break;}}if(!ok)return null;}return out.join(' ');};
+  const P=new Set();const add=ph=>{const s=seg(ph);if(s)P.add(s);};
+  const nums=[5,10,15,20,25,30,35,40,45,50,55,60,70,80,90,120,135,180];
+  for(const d of['右','左'])for(const n of nums)for(const ns of[KNUM(n),String(n)]){
+    for(const tpl of['{d}に{n}度','{d}へ{n}度','{d}に{n}度回って','{d}に{n}度回ってください','{d}を{n}度上げて','{d}を{n}度上げてください','{d}を{n}度下げて'])add(tpl.replace('{d}',d).replace('{n}',ns));}
+  for(const n of nums)for(const ns of[KNUM(n),String(n)]){add('もう'+ns+'度');add(ns+'度');}
+  for(const ph of['右を下にして','左を下にして','右を下にしてください','左を下にしてください','右を下に','左を下に','右向きに','左向きに','横向きになって',
+    '仰向けになって','仰向けになってください','仰向けに戻って','うつ伏せになって','うつ伏せになってください',
+    '右を少し上げて','左を少し上げて','右を上げて','左を上げて','右を少し上げてください','左を少し上げてください',
+    'もう少し','もうちょっと','もう少し上げて','戻って','少し戻って','止まって','はい止まって','ストップ','そこで止まって','そのまま',
+    '右に回って','左に回って','右に回ってください','左に回ってください','右回りに一回転','左回りに一回転','一回転してください','ぐるっと回って',
+    '息を吸って止めて','息を止めて','息を吸って','楽にしてください','楽にして','息をしてください'])add(ph);
+  const list=[...P];list.push('[unk]');return list;}
+
 async function loadModel(){
   if(mic.model)return mic.model;
   if(typeof Vosk==='undefined')throw new Error('novosk');
@@ -923,7 +970,8 @@ async function loadModel(){
   const total=+r.headers.get('content-length')||0,rd=r.body.getReader(),parts=[];let got=0;
   for(;;){const {done,value}=await rd.read();if(done)break;parts.push(value);got+=value.length;
     if(total)micUI('load','音声モデルを読み込み中… '+Math.round(got/total*100)+'%(初回のみ約50 MB)');}
-  const url=URL.createObjectURL(new Blob(parts,{type:'application/gzip'}));
+  const mblob=new Blob(parts,{type:'application/gzip'}),url=URL.createObjectURL(mblob);
+  try{micUI('load','声かけ辞書を準備中…');const w=await vocabFromTarGz(mblob);mic.grammar=w?buildGrammar(w):null;}catch(e){mic.grammar=null;}
   try{indexedDB.deleteDatabase('/vosk');}catch(e){} // the model lives in the offline cache; avoid a second copy in IndexedDB
   micUI('load','音声モデルを展開中…');
   mic.model=await Vosk.createModel(url);return mic.model;}
@@ -934,7 +982,8 @@ async function micStart(){
     mic.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,channelCount:1},video:false});
     const model=await loadModel();
     mic.ctx=new (window.AudioContext||window.webkitAudioContext)();
-    mic.rec=new model.KaldiRecognizer(mic.ctx.sampleRate);
+    mic.rec=null;if(mic.grammar&&mic.grammar.length>1){try{mic.rec=new model.KaldiRecognizer(mic.ctx.sampleRate,JSON.stringify(mic.grammar));mic.mode='辞書';}catch(e){mic.rec=null;}}
+    if(!mic.rec){mic.rec=new model.KaldiRecognizer(mic.ctx.sampleRate);mic.mode='自由';}
     mic.rec.on('partialresult',m=>{const p=m.result&&m.result.partial;if(p&&mic.on){const st=$('ovMic');st.textContent='聞き取り中:'+p.replace(/\s/g,'');}});
     mic.rec.on('result',m=>{const t=(m.result&&m.result.text||'').replace(/\s/g,'');if(t&&mic.on){$('ovMic').textContent='聞き取り中';command(t);}});
     const src=mic.ctx.createMediaStreamSource(mic.stream);mic.node=mic.ctx.createScriptProcessor(4096,1,1);
